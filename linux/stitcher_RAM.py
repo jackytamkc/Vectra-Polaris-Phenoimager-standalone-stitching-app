@@ -39,11 +39,51 @@ class TextHandler(logging.Handler):
         self.text_widget.after(0, append)
 
 
+class ChannelDialog(tk.Toplevel):
+    def __init__(self, parent, image_name, current_names):
+        super().__init__(parent)
+        self.title("Fix Channel Names")
+        self.geometry("600x450")
+        self.result = None
+        self.transient(parent)
+        self.grab_set()
+
+        tk.Label(self, text=f"⚠️ Suspicious Channels Detected!", font=("Arial", 12, "bold"), fg="#e74c3c").pack(
+            pady=(15, 5))
+        tk.Label(self, text=f"File: {image_name}", font=("Arial", 10, "bold")).pack()
+        tk.Label(self, text="Detected duplicates (e.g. all 'DAPI').\nEnter correct names (comma separated):",
+                 justify=tk.CENTER).pack(pady=10)
+
+        self.text_area = tk.Text(self, height=5, width=60, font=("Arial", 10))
+        self.text_area.insert(tk.END, ", ".join(current_names))
+        self.text_area.pack(pady=5, padx=20)
+
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(pady=20)
+
+        tk.Button(btn_frame, text="✅ Use These Names", command=self.on_ok, bg="#4CAF50", fg="white",
+                  font=("Arial", 10, "bold"), padx=15, pady=5).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="❌ Ignore", command=self.on_cancel, padx=15, pady=5).pack(side=tk.LEFT, padx=10)
+
+    def on_ok(self):
+        text = self.text_area.get("1.0", tk.END).strip()
+        if not text:
+            messagebox.showerror("Error", "Names cannot be empty!")
+            return
+        self.result = [x.strip() for x in text.split(',')]
+        self.destroy()
+
+    def on_cancel(self):
+        self.result = None
+        self.destroy()
+
+
 class StitchingEngine:
-    def __init__(self, input_dir, output_path, progress_callback=None):
+    def __init__(self, input_dir, output_path, progress_callback=None, ask_user_callback=None):
         self.input_dir = Path(input_dir)
         self.output_path = Path(output_path)
         self.progress_callback = progress_callback
+        self.ask_user_callback = ask_user_callback
         self.temp_path = self.output_path.with_suffix('.tmp.raw')
 
         self.tiles = []
@@ -100,7 +140,6 @@ class StitchingEngine:
         if not files: return False
 
         logging.info(f"🔍 [{self.input_dir.name}] Quick-Scanning {len(files)} tiles...")
-
         first_file = self.input_dir / files[0]
         try:
             sample = tifffile.imread(first_file)
@@ -110,15 +149,32 @@ class StitchingEngine:
                 self.n_channels, self.tile_h, self.tile_w = 1, *sample.shape
             elif sample.ndim == 3:
                 s = sample.shape
+                # Normalize to (C, H, W) for reading
                 if s[0] < s[1] and s[0] < s[2]:
                     self.n_channels, self.tile_h, self.tile_w = s
                 else:
                     self.tile_h, self.tile_w, self.n_channels = s[0], s[1], s[2]
 
             with tifffile.TiffFile(first_file) as tif:
-                names = self.extract_perkin_elmer_channels(tif)
-                self.channel_names = names if len(names) == self.n_channels else [f"Channel {x}" for x in
-                                                                                            range(self.n_channels)]
+                extracted = self.extract_perkin_elmer_channels(tif)
+                is_suspicious = False
+                if extracted and len(extracted) == self.n_channels:
+                    unique = set(extracted)
+                    if len(unique) < len(extracted): is_suspicious = True
+
+                if extracted and len(extracted) == self.n_channels and not is_suspicious:
+                    self.channel_names = extracted
+                else:
+                    logging.warning(f"⚠️ Channel Name Issue: {extracted}")
+                    if self.ask_user_callback:
+                        user_names = self.ask_user_callback(self.input_dir.name,
+                                                            extracted if extracted else ["?"] * self.n_channels)
+                        if user_names and len(user_names) == self.n_channels:
+                            self.channel_names = user_names
+                        else:
+                            self.channel_names = [f"Channel {x}" for x in range(self.n_channels)]
+                    else:
+                        self.channel_names = [f"Channel {x}" for x in range(self.n_channels)]
 
         except Exception as e:
             logging.error(f"❌ Error reading first tile header: {e}")
@@ -151,13 +207,12 @@ class StitchingEngine:
     def stitch(self, use_ram=True):
         target = None
         mode_name = "RAM" if use_ram else "DISK (Fallback)"
-
         try:
             if use_ram:
                 logging.info(f"⬇️  [{self.input_dir.name}] Downloading & Stitching to RAM...")
                 target = np.zeros(self.canvas_shape, dtype=self.dtype)
             else:
-                logging.info(f"⚠️  [{self.input_dir.name}] Not enough RAM. Using DISK Mode (Slower)...")
+                logging.info(f"⚠️  [{self.input_dir.name}] Using DISK Mode (Slower)...")
                 target = tifffile.memmap(self.temp_path, shape=self.canvas_shape, dtype=self.dtype, bigtiff=True)
 
             completed_tiles = 0
@@ -167,6 +222,7 @@ class StitchingEngine:
                 nonlocal completed_tiles
                 try:
                     img = tifffile.imread(tile['path'])
+                    # Normalize to (C, H, W)
                     if img.ndim == 2:
                         img = img[np.newaxis, :, :]
                     elif img.ndim == 3 and img.shape[2] == self.n_channels and img.shape[0] != self.n_channels:
@@ -185,8 +241,7 @@ class StitchingEngine:
                         target[:, y:y + h_fit, x:x + w_fit] = img[:, :h_fit, :w_fit]
 
                     completed_tiles += 1
-                    if self.progress_callback:
-                        self.progress_callback(completed_tiles, total_tiles, "Stitching")
+                    if self.progress_callback: self.progress_callback(completed_tiles, total_tiles, "Stitching")
                     return True
                 except:
                     return False
@@ -199,57 +254,82 @@ class StitchingEngine:
 
             logging.info(f"✅ [{self.input_dir.name}] Stitching ({mode_name}) Complete.")
             return target
-
-        except MemoryError:
-            logging.error(f"❌ [{self.input_dir.name}] Out of Memory!")
-            return None
         except Exception as e:
-            logging.error(f"❌ Error during stitch: {e}")
+            logging.error(f"❌ Stitch Failed: {e}")
+            return None
+
+    # --- 🛠️ VISIOPHARM-COMPATIBLE XML GENERATOR (FIXED) ---
+    def generate_visio_xml(self, size_y, size_x, size_c, dtype):
+        try:
+            ns = "http://www.openmicroscopy.org/Schemas/OME/2016-06"
+            root = ET.Element("OME", xmlns=ns)
+
+            pixel_type = str(dtype)
+            if 'uint8' in pixel_type:
+                pixel_type = 'uint8'
+            elif 'uint16' in pixel_type:
+                pixel_type = 'uint16'
+            elif 'float' in pixel_type:
+                pixel_type = 'float'
+
+            image = ET.SubElement(root, "Image", ID="Image:0", Name=self.input_dir.name)
+
+            # Explicitly set Interleaved=true
+            pixels = ET.SubElement(image, "Pixels",
+                                   ID="Pixels:0",
+                                   DimensionOrder="XYCZT",
+                                   Type=pixel_type,
+                                   SizeX=str(size_x),
+                                   SizeY=str(size_y),
+                                   SizeC=str(size_c),
+                                   SizeZ="1",
+                                   SizeT="1",
+                                   Interleaved="true")
+
+            # THE FIX: Set SamplesPerPixel = Total Channels (e.g. "8")
+            for i, name in enumerate(self.channel_names):
+                ET.SubElement(pixels, "Channel",
+                              ID=f"Channel:0:{i}",
+                              Name=name,
+                              SamplesPerPixel=str(size_c))
+
+                # Explicitly link TiffData to IFD 0
+            ET.SubElement(pixels, "TiffData", FirstZ="0", IFD="0")
+
+            return ET.tostring(root, encoding='utf-8')
+        except Exception as e:
+            logging.error(f"XML Gen Error: {e}")
             return None
 
     def write_to_disk(self, canvas, is_ram_mode):
-        logging.info(f"💾 [{self.input_dir.name}] Formatting & Saving...")
-        if self.progress_callback:
-            self.progress_callback(0, 0, "Formatting...")
+        logging.info(f"💾 [{self.input_dir.name}] Formatting & Saving (Visiopharm Replica)...")
+        if self.progress_callback: self.progress_callback(0, 0, "Formatting...")
 
         try:
             os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
 
-            # --- 1. DATA TRANSFORMATION ---
-            # From (C, Y, X) -> To (Y, X, C) for Visiopharm compatibility
-            logging.info(f"   [{self.input_dir.name}] Converting to Pixel-Interleaved (H, W, C)...")
+            # 1. TRANSFORM TO CONTIGUOUS (Height, Width, Channel)
+            logging.info(f"   [{self.input_dir.name}] Converting to Interleaved (H, W, C)...")
             interleaved_data = np.moveaxis(canvas, 0, -1)
+            h, w, c = interleaved_data.shape
 
-            # --- 2. METADATA FIX (CRITICAL) ---
-            # We must explicitly format 'Channel' as a LIST of DICTIONARIES
-            # otherwise tifffile assigns the first name to everything.
-            ome_channel_list = []
-            for i, name in enumerate(self.channel_names):
-                ome_channel_list.append({
-                    'ID': f'Channel:0:{i}',
-                    'Name': name,
-                    'SamplesPerPixel': 1
-                })
-
-            metadata = {
-                'axes': 'YXC',
-                'Channel': ome_channel_list,  # <--- THIS IS THE FIX
-                'Plane': {'PositionZ': 0.0, 'PositionT': 0.0}
-            }
+            # 2. GENERATE XML (With SamplesPerPixel FIX)
+            xml_bytes = self.generate_visio_xml(h, w, c, self.dtype)
 
             opts = dict(
                 tile=(TILE_SIZE, TILE_SIZE),
                 compression='lzw',
                 planarconfig='CONTIG',
-                metadata=metadata
+                description=xml_bytes,  # Force our custom XML
+                metadata=None  # Disable tifffile auto-gen
             )
 
-            # --- 3. PYRAMID WRITING ---
-            h, w = interleaved_data.shape[:2]
+            # 3. CALCULATE PYRAMIDS
             n_levels = 0
-            while max(h, w) > 256:
-                h //= 2
-                w //= 2
+            temp_h, temp_w = h, w
+            while max(temp_h, temp_w) > 256:
+                temp_h //= 2
+                temp_w //= 2
                 n_levels += 1
 
             logging.info(f"   [{self.input_dir.name}] Generating {n_levels} Pyramid Levels.")
@@ -258,10 +338,10 @@ class StitchingEngine:
 
                 # Write Level 0 (Full Res)
                 if self.progress_callback: self.progress_callback(0, 0, "Writing Full Res...")
-                logging.info(f"   [{self.input_dir.name}] Writing Full Image...")
+                logging.info(f"   [{self.input_dir.name}] Writing Level 0...")
                 tif.write(interleaved_data, subifds=n_levels, **opts)
 
-                # Write Pyramids
+                # Write Pyramids (Hidden inside SubIFDs)
                 prev = interleaved_data
                 for level in range(1, n_levels + 1):
                     if self.progress_callback:
@@ -269,7 +349,7 @@ class StitchingEngine:
 
                     logging.info(f"   [{self.input_dir.name}] Downsampling Level {level}...")
 
-                    # Downsample (H, W) keeping C intact
+                    # Downsample (H, W), preserve Channels
                     curr = prev[::2, ::2, :]
 
                     logging.info(f"   [{self.input_dir.name}] Writing Level {level}...")
@@ -282,7 +362,7 @@ class StitchingEngine:
 
         except Exception as e:
             logging.error(f"❌ [{self.input_dir.name}] Write Failed: {e}")
-            if os.path.exists(self.output_path) and os.path.getsize(self.output_path) < 50000:
+            if os.path.exists(self.output_path):
                 try:
                     os.remove(self.output_path)
                 except:
@@ -298,9 +378,8 @@ class StitchingEngine:
             else:
                 del canvas
 
-            # ==========================================
 
-
+# ==========================================
 # 🛑 GUI LOGIC
 # ==========================================
 
@@ -381,6 +460,18 @@ class StitcherApp(tk.Tk):
             self.progress_label.config(text=f"{phase_text}")
         self.update_idletasks()
 
+    def ask_user_for_channels(self, image_name, current_names):
+        result_container = {}
+
+        def _popup():
+            dialog = ChannelDialog(self, image_name, current_names)
+            self.wait_window(dialog)
+            result_container['names'] = dialog.result
+
+        self.after(0, _popup)
+        while 'names' not in result_container: time.sleep(0.5)
+        return result_container['names']
+
     def start_thread(self):
         inp, out = self.input_entry.get(), self.output_entry.get()
         if not inp or not out: messagebox.showerror("Error", "Select paths."); return
@@ -389,27 +480,25 @@ class StitcherApp(tk.Tk):
 
     def run_process(self, input_root, output_root):
         valid_folders = [root for root, _, files in os.walk(input_root) if any(f.endswith('.tif') for f in files)]
-
         if not valid_folders:
             messagebox.showwarning("No Images", "No input folders found!")
-            self.start_btn.after(0, lambda: self.start_btn.config(state="normal", text="Start Processing"))
+            self.start_btn.after(0, lambda: self.start_btn.config(state="normal", text="Stitch Stitch!"))
             return
 
         for folder in valid_folders:
             folder_name = os.path.basename(folder)
             out_file = os.path.join(output_root, f"{folder_name}.ome.tif")
-
             if os.path.exists(out_file):
                 logging.info(f"⏩ Skipping {folder_name} (Exists)")
                 continue
 
-            stitcher = StitchingEngine(folder, out_file, self.update_progress)
+            # Pass both callbacks here
+            stitcher = StitchingEngine(folder, out_file, self.update_progress, self.ask_user_for_channels)
             if not stitcher.scan_metadata(): continue
 
             needed_gb = stitcher.calculate_ram_needed_gb()
             available_gb = psutil.virtual_memory().available / (1024 ** 3)
             use_ram = (needed_gb + 2.0 < available_gb)
-
             while use_ram and (psutil.virtual_memory().available / (1024 ** 3) < needed_gb + 2.0):
                 self.progress_label.config(text="Waiting for RAM...")
                 time.sleep(5)
@@ -422,7 +511,7 @@ class StitcherApp(tk.Tk):
         self.progress_bar.stop()
         self.progress_bar.config(mode='determinate', value=100)
         self.progress_label.config(text="Finished")
-        self.start_btn.after(0, lambda: self.start_btn.config(state="normal", text="Start Processing"))
+        self.start_btn.after(0, lambda: self.start_btn.config(state="normal", text="Stitch Stitch!"))
         messagebox.showinfo("Done", "Processing Complete!")
 
 
