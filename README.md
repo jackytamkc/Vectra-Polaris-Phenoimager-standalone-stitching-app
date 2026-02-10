@@ -1,4 +1,4 @@
-Stitcher for VP/Phenoimager
+<span style="font-size:30px; color:blue;"> Stitcher for VP/Phenoimager </span>
 
 It allows you to stitch multiple folders sequentially in background. Easy to use.
 
