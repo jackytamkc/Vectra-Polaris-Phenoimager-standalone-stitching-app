@@ -3,7 +3,7 @@
 
 It allows you to stitch multiple folders sequentially in background. Easy to use.
 
-Currently only support Windows users.
+App is under 'dist' folder. Currently only support Windows users.
 
 Speed is mainly limited by your internet bandwidth if your images are on network drive.
 
