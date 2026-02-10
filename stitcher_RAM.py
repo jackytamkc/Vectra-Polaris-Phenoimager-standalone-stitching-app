@@ -208,35 +208,43 @@ class StitchingEngine:
             return None
 
     def write_to_disk(self, canvas, is_ram_mode):
-        logging.info(f"💾 [{self.input_dir.name}] Formatting & Saving (Visiopharm Replica Mode)...")
+        logging.info(f"💾 [{self.input_dir.name}] Formatting & Saving...")
         if self.progress_callback:
             self.progress_callback(0, 0, "Formatting...")
 
         try:
             os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
 
-            # --- 1. DATA TRANSFORMATION (Crucial Step) ---
-            # Current: (Channels, Height, Width) -> Planar (Slow on Network)
-            # Target:  (Height, Width, Channels) -> Contiguous (Fast on Network)
+            # --- 1. DATA TRANSFORMATION ---
+            # From (C, Y, X) -> To (Y, X, C) for Visiopharm compatibility
             logging.info(f"   [{self.input_dir.name}] Converting to Pixel-Interleaved (H, W, C)...")
-
-            # Use moveaxis to create a view (fast, no copy if possible)
-            # FROM: (C, Y, X) -> TO: (Y, X, C)
             interleaved_data = np.moveaxis(canvas, 0, -1)
 
-            # --- 2. CONFIGURATION ---
-            # Match Visiopharm: LZW, 512px Tiles, Contiguous, OME-XML
-            metadata = {'axes': 'YXC', 'Channel': {'Name': self.channel_names}}
+            # --- 2. METADATA FIX (CRITICAL) ---
+            # We must explicitly format 'Channel' as a LIST of DICTIONARIES
+            # otherwise tifffile assigns the first name to everything.
+            ome_channel_list = []
+            for i, name in enumerate(self.channel_names):
+                ome_channel_list.append({
+                    'ID': f'Channel:0:{i}',
+                    'Name': name,
+                    'SamplesPerPixel': 1
+                })
+
+            metadata = {
+                'axes': 'YXC',
+                'Channel': ome_channel_list,  # <--- THIS IS THE FIX
+                'Plane': {'PositionZ': 0.0, 'PositionT': 0.0}
+            }
 
             opts = dict(
                 tile=(TILE_SIZE, TILE_SIZE),
                 compression='lzw',
-                planarconfig='CONTIG',  # <--- THE MAGIC KEY
+                planarconfig='CONTIG',
                 metadata=metadata
             )
 
-            # --- 3. AUTO-CALCULATE PYRAMID LEVELS ---
-            # Generate levels until dimension < 256 (matches Visiopharm 8 levels)
+            # --- 3. PYRAMID WRITING ---
             h, w = interleaved_data.shape[:2]
             n_levels = 0
             while max(h, w) > 256:
@@ -244,13 +252,13 @@ class StitchingEngine:
                 w //= 2
                 n_levels += 1
 
-            logging.info(f"   [{self.input_dir.name}] Will generate {n_levels} Sub-resolutions.")
+            logging.info(f"   [{self.input_dir.name}] Generating {n_levels} Pyramid Levels.")
 
             with tifffile.TiffWriter(self.output_path, bigtiff=True) as tif:
 
                 # Write Level 0 (Full Res)
-                if self.progress_callback: self.progress_callback(0, 0, "Writing Full Res (Heavy)...")
-                logging.info(f"   [{self.input_dir.name}] Writing Level 0 (Contiguous)...")
+                if self.progress_callback: self.progress_callback(0, 0, "Writing Full Res...")
+                logging.info(f"   [{self.input_dir.name}] Writing Full Image...")
                 tif.write(interleaved_data, subifds=n_levels, **opts)
 
                 # Write Pyramids
@@ -261,8 +269,7 @@ class StitchingEngine:
 
                     logging.info(f"   [{self.input_dir.name}] Downsampling Level {level}...")
 
-                    # Downsample (Average pooling for smoother look)
-                    # We stride only on H and W (indices 0 and 1), keeping C (index 2) intact
+                    # Downsample (H, W) keeping C intact
                     curr = prev[::2, ::2, :]
 
                     logging.info(f"   [{self.input_dir.name}] Writing Level {level}...")
