@@ -94,11 +94,22 @@ class StitchingEngine:
         self.tile_w, self.tile_h = 0, 0
         self.n_channels = 0
 
+        # Default Resolution (Fallback = 0.5um/pixel if metadata is missing)
+        self.phys_size_x_um = 0.5
+        self.phys_size_y_um = 0.5
+        self.tiff_res_val = (20000, 20000)  # Pixels per Unit
+        self.tiff_res_unit = 3  # 3 = Centimeter
+
     def get_rational(self, tag):
-        val = tag.value
-        if isinstance(val, (tuple, list)) and len(val) == 2:
-            return val[0] / val[1]
-        return float(val)
+        try:
+            val = tag.value
+            if isinstance(val, (tuple, list)) and len(val) == 2:
+                # Handle (Numerator, Denominator)
+                if val[1] == 0: return 0
+                return val[0] / val[1]
+            return float(val)
+        except:
+            return 0
 
     def extract_perkin_elmer_channels(self, tif):
         names = []
@@ -149,13 +160,14 @@ class StitchingEngine:
                 self.n_channels, self.tile_h, self.tile_w = 1, *sample.shape
             elif sample.ndim == 3:
                 s = sample.shape
-                # Normalize to (C, H, W) for reading
+                # Normalize to (C, H, W)
                 if s[0] < s[1] and s[0] < s[2]:
                     self.n_channels, self.tile_h, self.tile_w = s
                 else:
                     self.tile_h, self.tile_w, self.n_channels = s[0], s[1], s[2]
 
             with tifffile.TiffFile(first_file) as tif:
+                # 1. Extract Channels
                 extracted = self.extract_perkin_elmer_channels(tif)
                 is_suspicious = False
                 if extracted and len(extracted) == self.n_channels:
@@ -175,6 +187,39 @@ class StitchingEngine:
                             self.channel_names = [f"Channel {x}" for x in range(self.n_channels)]
                     else:
                         self.channel_names = [f"Channel {x}" for x in range(self.n_channels)]
+
+                # 2. Extract Resolution (The Smart Fix)
+                page = tif.pages[0]
+                tags = page.tags
+
+                if 282 in tags and 283 in tags:
+                    x_res_raw = self.get_rational(tags[282])  # Pixels per Unit
+                    y_res_raw = self.get_rational(tags[283])
+                    unit = tags[296].value if 296 in tags else 2  # Default to Inch (2) if missing
+
+                    # Normalize to Pixels per Centimeter
+                    if unit == 2:  # Inch
+                        res_cm_x = x_res_raw / 2.54
+                        res_cm_y = y_res_raw / 2.54
+                    elif unit == 3:  # Centimeter
+                        res_cm_x = x_res_raw
+                        res_cm_y = y_res_raw
+                    else:  # No unit/Unknown
+                        res_cm_x = 20000  # Assume 0.5um
+                        res_cm_y = 20000
+
+                    # Store for TIFF writing (Pixels per CM)
+                    self.tiff_res_val = (res_cm_x, res_cm_y)
+                    self.tiff_res_unit = 3  # Centimeter
+
+                    # Store for OME-XML (Microns per Pixel)
+                    # 1 cm = 10,000 microns.  Microns/Pixel = 10,000 / (Pixels/CM)
+                    if res_cm_x > 0: self.phys_size_x_um = 10000 / res_cm_x
+                    if res_cm_y > 0: self.phys_size_y_um = 10000 / res_cm_y
+
+                    logging.info(f"📏 Resolution Found: {self.phys_size_x_um:.4f} µm/pixel")
+                else:
+                    logging.warning("⚠️ No resolution tags found. Defaulting to 0.5 µm/pixel.")
 
         except Exception as e:
             logging.error(f"❌ Error reading first tile header: {e}")
@@ -222,7 +267,6 @@ class StitchingEngine:
                 nonlocal completed_tiles
                 try:
                     img = tifffile.imread(tile['path'])
-                    # Normalize to (C, H, W)
                     if img.ndim == 2:
                         img = img[np.newaxis, :, :]
                     elif img.ndim == 3 and img.shape[2] == self.n_channels and img.shape[0] != self.n_channels:
@@ -258,7 +302,7 @@ class StitchingEngine:
             logging.error(f"❌ Stitch Failed: {e}")
             return None
 
-    # --- 🛠️ VISIOPHARM-COMPATIBLE XML GENERATOR (FIXED) ---
+    # --- 🛠️ VISIOPHARM-COMPATIBLE XML GENERATOR (FIXED + DYNAMIC RESOLUTION) ---
     def generate_visio_xml(self, size_y, size_x, size_c, dtype):
         try:
             ns = "http://www.openmicroscopy.org/Schemas/OME/2016-06"
@@ -274,7 +318,7 @@ class StitchingEngine:
 
             image = ET.SubElement(root, "Image", ID="Image:0", Name=self.input_dir.name)
 
-            # Explicitly set Interleaved=true
+            # Use the calculated Physical Size
             pixels = ET.SubElement(image, "Pixels",
                                    ID="Pixels:0",
                                    DimensionOrder="XYCZT",
@@ -284,16 +328,18 @@ class StitchingEngine:
                                    SizeC=str(size_c),
                                    SizeZ="1",
                                    SizeT="1",
+                                   PhysicalSizeX=str(self.phys_size_x_um),
+                                   PhysicalSizeXUnit="µm",
+                                   PhysicalSizeY=str(self.phys_size_y_um),
+                                   PhysicalSizeYUnit="µm",
                                    Interleaved="true")
 
-            # THE FIX: Set SamplesPerPixel = Total Channels (e.g. "8")
             for i, name in enumerate(self.channel_names):
                 ET.SubElement(pixels, "Channel",
                               ID=f"Channel:0:{i}",
                               Name=name,
-                              SamplesPerPixel=str(size_c))
+                              SamplesPerPixel=str(size_c))  # SamplesPerPixel = Total Channels
 
-                # Explicitly link TiffData to IFD 0
             ET.SubElement(pixels, "TiffData", FirstZ="0", IFD="0")
 
             return ET.tostring(root, encoding='utf-8')
@@ -308,23 +354,32 @@ class StitchingEngine:
         try:
             os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
 
-            # 1. TRANSFORM TO CONTIGUOUS (Height, Width, Channel)
             logging.info(f"   [{self.input_dir.name}] Converting to Interleaved (H, W, C)...")
             interleaved_data = np.moveaxis(canvas, 0, -1)
             h, w, c = interleaved_data.shape
 
-            # 2. GENERATE XML (With SamplesPerPixel FIX)
             xml_bytes = self.generate_visio_xml(h, w, c, self.dtype)
 
-            opts = dict(
+            # Use the detected resolution
+            opts_main = dict(
                 tile=(TILE_SIZE, TILE_SIZE),
                 compression='lzw',
                 planarconfig='CONTIG',
-                description=xml_bytes,  # Force our custom XML
-                metadata=None  # Disable tifffile auto-gen
+                resolution=self.tiff_res_val,
+                resolutionunit=self.tiff_res_unit,
+                description=xml_bytes,
+                metadata=None
             )
 
-            # 3. CALCULATE PYRAMIDS
+            opts_pyramid = dict(
+                tile=(TILE_SIZE, TILE_SIZE),
+                compression='lzw',
+                planarconfig='CONTIG',
+                resolution=self.tiff_res_val,
+                resolutionunit=self.tiff_res_unit,
+                metadata=None
+            )
+
             n_levels = 0
             temp_h, temp_w = h, w
             while max(temp_h, temp_w) > 256:
@@ -336,12 +391,10 @@ class StitchingEngine:
 
             with tifffile.TiffWriter(self.output_path, bigtiff=True) as tif:
 
-                # Write Level 0 (Full Res)
                 if self.progress_callback: self.progress_callback(0, 0, "Writing Full Res...")
                 logging.info(f"   [{self.input_dir.name}] Writing Level 0...")
-                tif.write(interleaved_data, subifds=n_levels, **opts)
+                tif.write(interleaved_data, subifds=n_levels, **opts_main)
 
-                # Write Pyramids (Hidden inside SubIFDs)
                 prev = interleaved_data
                 for level in range(1, n_levels + 1):
                     if self.progress_callback:
@@ -349,11 +402,10 @@ class StitchingEngine:
 
                     logging.info(f"   [{self.input_dir.name}] Downsampling Level {level}...")
 
-                    # Downsample (H, W), preserve Channels
                     curr = prev[::2, ::2, :]
 
                     logging.info(f"   [{self.input_dir.name}] Writing Level {level}...")
-                    tif.write(curr, **opts)
+                    tif.write(curr, **opts_pyramid)
                     prev = curr
 
             final_size = os.path.getsize(self.output_path) / (1024 ** 2)
