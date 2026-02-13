@@ -1,4 +1,4 @@
-('/mnt/c/users/kctam/Stitching_script/linux/build/YourFavouriteStitcher/PYZ-00.pyz',
+('/mnt/c/users/kctam/stitching_script/linux/build/YourFavouriteStitcher/PYZ-00.pyz',
  [('PIL',
    '/home/jacky/anaconda3/envs/stitch/lib/python3.10/site-packages/PIL/__init__.py',
    'PYMODULE'),
