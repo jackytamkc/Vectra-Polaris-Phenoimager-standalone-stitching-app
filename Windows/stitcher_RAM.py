@@ -108,7 +108,8 @@ class StitchingEngine:
                 if val[1] == 0: return 0
                 return val[0] / val[1]
             return float(val)
-        except:
+        except (TypeError, ValueError, AttributeError) as e:
+            logging.debug(f"get_rational: could not parse tag {tag}: {e}")
             return 0
 
     def extract_perkin_elmer_channels(self, tif):
@@ -120,20 +121,30 @@ class StitchingEngine:
                     if "PerkinElmer-QPI-ImageDescription" in xml_str:
                         try:
                             root = ET.fromstring(xml_str)
-                            if root.find("ImageType").text == "Thumbnail": continue
+                            # Skip thumbnail pages if <ImageType> is present and says so.
+                            image_type = root.find("ImageType")
+                            if image_type is not None and image_type.text == "Thumbnail":
+                                continue
                             name = root.find("Name")
-                            if name is not None: names.append(name.text)
-                        except:
+                            if name is not None and name.text:
+                                names.append(name.text)
+                        except ET.ParseError:
                             continue
-        except:
-            pass
+        except Exception as e:
+            logging.debug(f"extract_perkin_elmer_channels: {e}")
         return names
 
     def _read_tile_meta_worker(self, path):
         try:
             with tifffile.TiffFile(path) as tif:
                 tags = tif.pages[0].tags
-                if not (286 in tags and 282 in tags): return None
+                # All four tags are required for tile placement:
+                # 282=XResolution, 283=YResolution, 286=XPosition, 287=YPosition
+                required = (282, 283, 286, 287)
+                if not all(t in tags for t in required):
+                    missing = [t for t in required if t not in tags]
+                    logging.warning(f"⚠️ {Path(path).name}: missing TIFF position tags {missing}")
+                    return None
                 x_res = self.get_rational(tags[282])
                 y_res = self.get_rational(tags[283])
                 x_pos = self.get_rational(tags[286])
@@ -143,11 +154,12 @@ class StitchingEngine:
                     'abs_x': int(round(x_res * x_pos)),
                     'abs_y': int(round(y_res * y_pos))
                 }
-        except:
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to read metadata from {Path(path).name}: {e}")
             return None
 
     def scan_metadata(self):
-        files = sorted([f for f in os.listdir(self.input_dir) if f.endswith(('.tif', '.tiff'))])
+        files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith(('.tif', '.tiff'))])
         if not files: return False
 
         logging.info(f"🔍 [{self.input_dir.name}] Quick-Scanning {len(files)} tiles...")
@@ -261,10 +273,12 @@ class StitchingEngine:
                 target = tifffile.memmap(self.temp_path, shape=self.canvas_shape, dtype=self.dtype, bigtiff=True)
 
             completed_tiles = 0
+            failed_tiles = 0
             total_tiles = len(self.tiles)
+            counter_lock = threading.Lock()
 
             def _load_and_paste(tile):
-                nonlocal completed_tiles
+                nonlocal completed_tiles, failed_tiles
                 try:
                     img = tifffile.imread(tile['path'])
                     if img.ndim == 2:
@@ -272,7 +286,11 @@ class StitchingEngine:
                     elif img.ndim == 3 and img.shape[2] == self.n_channels and img.shape[0] != self.n_channels:
                         img = np.moveaxis(img, -1, 0)
 
-                    if img.shape[0] != self.n_channels: return False
+                    if img.shape[0] != self.n_channels:
+                        logging.warning(f"⚠️ Channel mismatch in {Path(tile['path']).name}: got {img.shape[0]}, expected {self.n_channels}")
+                        with counter_lock:
+                            failed_tiles += 1
+                        return False
 
                     y = tile['abs_y'] - self.min_y
                     x = tile['abs_x'] - self.min_x
@@ -284,14 +302,22 @@ class StitchingEngine:
                     if h_fit > 0 and w_fit > 0:
                         target[:, y:y + h_fit, x:x + w_fit] = img[:, :h_fit, :w_fit]
 
-                    completed_tiles += 1
-                    if self.progress_callback: self.progress_callback(completed_tiles, total_tiles, "Stitching")
+                    with counter_lock:
+                        completed_tiles += 1
+                        current = completed_tiles
+                    if self.progress_callback: self.progress_callback(current, total_tiles, "Stitching")
                     return True
-                except:
+                except Exception as e:
+                    logging.error(f"❌ Failed to load tile {Path(tile['path']).name}: {e}")
+                    with counter_lock:
+                        failed_tiles += 1
                     return False
 
             with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool:
                 list(pool.map(_load_and_paste, self.tiles))
+
+            if failed_tiles > 0:
+                logging.warning(f"⚠️ [{self.input_dir.name}] {failed_tiles}/{total_tiles} tiles FAILED — output will have gaps!")
 
             if not use_ram: target.flush()
             if self.progress_callback: self.progress_callback(total_tiles, total_tiles, "Stitching")
@@ -302,19 +328,29 @@ class StitchingEngine:
             logging.error(f"❌ Stitch Failed: {e}")
             return None
 
+    # OME-TIFF pixel type mapping. OME schema requires specific strings.
+    _OME_PIXEL_TYPE_MAP = {
+        'int8':    'int8',
+        'int16':   'int16',
+        'int32':   'int32',
+        'uint8':   'uint8',
+        'uint16':  'uint16',
+        'uint32':  'uint32',
+        'float32': 'float',
+        'float64': 'double',
+    }
+
     # --- 🛠️ VISIOPHARM-COMPATIBLE XML GENERATOR (FIXED + DYNAMIC RESOLUTION) ---
     def generate_visio_xml(self, size_y, size_x, size_c, dtype):
         try:
             ns = "http://www.openmicroscopy.org/Schemas/OME/2016-06"
             root = ET.Element("OME", xmlns=ns)
 
-            pixel_type = str(dtype)
-            if 'uint8' in pixel_type:
-                pixel_type = 'uint8'
-            elif 'uint16' in pixel_type:
+            numpy_dtype = str(dtype)
+            pixel_type = self._OME_PIXEL_TYPE_MAP.get(numpy_dtype)
+            if pixel_type is None:
+                logging.warning(f"⚠️ Unrecognized dtype '{numpy_dtype}', defaulting to uint16")
                 pixel_type = 'uint16'
-            elif 'float' in pixel_type:
-                pixel_type = 'float'
 
             image = ET.SubElement(root, "Image", ID="Image:0", Name=self.input_dir.name)
 
@@ -531,7 +567,8 @@ class StitcherApp(tk.Tk):
         threading.Thread(target=self.run_process, args=(inp, out), daemon=True).start()
 
     def run_process(self, input_root, output_root):
-        valid_folders = [root for root, _, files in os.walk(input_root) if any(f.endswith('.tif') for f in files)]
+        valid_folders = [root for root, _, files in os.walk(input_root)
+                         if any(f.lower().endswith(('.tif', '.tiff')) for f in files)]
         if not valid_folders:
             messagebox.showwarning("No Images", "No input folders found!")
             self.start_btn.after(0, lambda: self.start_btn.config(state="normal", text="Stitch Stitch!"))
@@ -552,7 +589,8 @@ class StitcherApp(tk.Tk):
             available_gb = psutil.virtual_memory().available / (1024 ** 3)
             use_ram = (needed_gb + 2.0 < available_gb)
             while use_ram and (psutil.virtual_memory().available / (1024 ** 3) < needed_gb + 2.0):
-                self.progress_label.config(text="Waiting for RAM...")
+                # Tkinter is not thread-safe — marshal UI updates to main thread.
+                self.after(0, lambda: self.progress_label.config(text="Waiting for RAM..."))
                 time.sleep(5)
 
             result_data = stitcher.stitch(use_ram=use_ram)
