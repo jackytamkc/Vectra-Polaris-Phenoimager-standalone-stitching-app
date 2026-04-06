@@ -2,8 +2,8 @@
 
 
 a = Analysis(
-    ['stitcher_RAM.py'],
-    pathex=[],
+    ['../stitcher_RAM.py'],
+    pathex=['..'],
     binaries=[],
     datas=[],
     hiddenimports=['psutil', 'imagecodecs._shared', 'imagecodecs._imcd'],
