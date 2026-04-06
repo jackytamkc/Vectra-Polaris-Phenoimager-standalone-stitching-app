@@ -2,6 +2,8 @@
 
 A standalone GUI tool that sequentially stitches multi-channel TIFF tiles exported from Akoya Vectra Polaris / PhenoImager scanners into pyramidal OME-TIFFs readable by QuPath and Visiopharm.
 
+Available for **Windows, Linux, and macOS** (Apple Silicon + Intel).
+
 > Logic adapted from Pete Bankhead (QuPath founder). Created by Jacky @ Ramachandran Lab.
 
 ## Features
@@ -19,6 +21,7 @@ The fastest way to use this tool is to grab a pre-built binary from the **[Relea
 
 - **Windows**: `YourFavouriteStitcher-windows.exe` — double-click to run
 - **Linux**: `YourFavouriteStitcher-linux` — make executable first: `chmod +x YourFavouriteStitcher-linux`
+- **macOS**: `YourFavouriteStitcher-macos.app.zip` — unzip and move to `/Applications`. On first launch you may need to right-click → Open (Gatekeeper requires approval for unsigned apps). Apple Silicon and Intel Macs are both supported.
 
 ## Run from source
 
@@ -39,9 +42,15 @@ pip install -r requirements-build.txt
 cd linux && pyinstaller YourFavouriteStitcher.spec
 # Windows
 cd Windows && pyinstaller YourFavouriteStitcher.spec
+# macOS
+cd Mac && pyinstaller YourFavouriteStitcher.spec
 ```
 
-The binary will appear in the per-OS `dist/` subfolder.
+The binary will appear in the per-OS `dist/` subfolder (`.exe` on Windows, bare executable on Linux, `.app` bundle on macOS).
+
+### Automated builds
+
+The repository includes a GitHub Actions workflow (`.github/workflows/build-release.yml`) that builds binaries for all three platforms whenever you push a version tag (e.g. `git tag v1.2.0 && git push --tags`). The workflow uploads all three binaries as assets to the corresponding GitHub Release automatically.
 
 ## Performance notes
 
