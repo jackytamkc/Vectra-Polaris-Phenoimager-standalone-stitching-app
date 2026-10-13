@@ -1,0 +1,159 @@
+{
+"root": "/data",
+"entries": [
+{
+"name": "$RECYCLE.BIN",
+"dir": true,
+"mtime": 1790000000.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 1,
+"n_files": 0,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "741122_1_Scan1",
+"dir": true,
+"mtime": 1790003600.0,
+"size": 102400,
+"probe": {
+"groups": [
+[
+"741122_1_Scan1",
+"component_data",
+370
+]
+],
+"n_dirs": 0,
+"n_files": 370,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "741122_1_Scan1.ome.tif",
+"dir": false,
+"mtime": 1790007200.0,
+"size": 18960000000
+},
+{
+"name": "741122_2_Scan1",
+"dir": true,
+"mtime": 1790010800.0,
+"size": 102400,
+"probe": {
+"groups": [
+[
+"741122_2_Scan1",
+"component_data",
+365
+]
+],
+"n_dirs": 0,
+"n_files": 365,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "741122_2_Scan1.ome.tif",
+"dir": false,
+"mtime": 1790014400.0,
+"size": 18180000000
+},
+{
+"name": "datasets",
+"dir": true,
+"mtime": 1790018000.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 2,
+"n_files": 0,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "patch_cache",
+"dir": true,
+"mtime": 1790021600.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 3,
+"n_files": 0,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "project_alpha",
+"dir": true,
+"mtime": 1790025200.0,
+"size": 4096,
+"probe": {
+"groups": [],
+"n_dirs": 3,
+"n_files": 9,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "System Volume Information",
+"dir": true,
+"mtime": 1790028800.0,
+"size": 4096,
+"probe": {
+"groups": [],
+"n_dirs": 3,
+"n_files": 4,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "temp",
+"dir": true,
+"mtime": 1790032400.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 1,
+"n_files": 0,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "toolkits",
+"dir": true,
+"mtime": 1790036000.0,
+"size": 4096,
+"probe": {
+"groups": [],
+"n_dirs": 4,
+"n_files": 1,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "WSIs",
+"dir": true,
+"mtime": 1790039600.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 2,
+"n_files": 0,
+"others": [],
+"ms": 0
+}
+}
+]
+}

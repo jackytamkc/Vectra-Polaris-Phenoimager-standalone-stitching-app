@@ -1,0 +1,5 @@
+# Development / test-only dependencies (not needed to run or build the app)
+-r requirements.txt
+pytest>=7.0
+# Screenshots: tools/shots.py and the pixel check in tests/gui/test_theme.py (ImageGrab with xdisplay)
+pillow>=7.1

@@ -1,0 +1,440 @@
+{
+"root": "/mnt/labshare/UserA",
+"entries": [
+{
+"name": "._.DS_Store",
+"dir": false,
+"mtime": 1790000000.0,
+"size": 4096
+},
+{
+"name": "._course notes.zip",
+"dir": false,
+"mtime": 1790003600.0,
+"size": 4096
+},
+{
+"name": "._projectA.Rproj",
+"dir": false,
+"mtime": 1790007200.0,
+"size": 4096
+},
+{
+"name": "._results_a.rds",
+"dir": false,
+"mtime": 1790010800.0,
+"size": 4096
+},
+{
+"name": "._session1.RData",
+"dir": false,
+"mtime": 1790014400.0,
+"size": 4096
+},
+{
+"name": ".DS_Store",
+"dir": false,
+"mtime": 1790018000.0,
+"size": 24576
+},
+{
+"name": ".Rhistory",
+"dir": false,
+"mtime": 1790021600.0,
+"size": 900
+},
+{
+"name": "analysis_b",
+"dir": true,
+"mtime": 1790025200.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 13,
+"n_files": 25,
+"others": [],
+"ms": 3
+}
+},
+{
+"name": "analysis_b_out",
+"dir": true,
+"mtime": 1790028800.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 4,
+"n_files": 15,
+"others": [],
+"ms": 2
+}
+},
+{
+"name": "annotated",
+"dir": true,
+"mtime": 1790032400.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 3,
+"n_files": 0,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "Cohort2",
+"dir": true,
+"mtime": 1790036000.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 0,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "comparisons",
+"dir": true,
+"mtime": 1790039600.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 0,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "course notes.zip",
+"dir": false,
+"mtime": 1790043200.0,
+"size": 10800000
+},
+{
+"name": "filter_a",
+"dir": true,
+"mtime": 1790046800.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 0,
+"n_files": 5,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "filter_b",
+"dir": true,
+"mtime": 1790050400.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 1,
+"n_files": 4,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "informexport",
+"dir": true,
+"mtime": 1790054000.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 1,
+"n_files": 2,
+"others": [
+"Batch.log",
+"batch_procedure.ifp"
+],
+"ms": 0
+}
+},
+{
+"name": "kb07a1_Scan1",
+"dir": true,
+"mtime": 1790057600.0,
+"size": 0,
+"probe": {
+"groups": [
+[
+"kb07a1_Scan1",
+"component_data",
+173
+]
+],
+"n_dirs": 0,
+"n_files": 173,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "kb07a2_Scan1",
+"dir": true,
+"mtime": 1790061200.0,
+"size": 0,
+"probe": {
+"groups": [
+[
+"kb07a2_Scan1",
+"component_data",
+64
+]
+],
+"n_dirs": 0,
+"n_files": 64,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "kb07anc_Scan1",
+"dir": true,
+"mtime": 1790064800.0,
+"size": 0,
+"probe": {
+"groups": [
+[
+"kb07anc_Scan1",
+"component_data",
+178
+]
+],
+"n_dirs": 0,
+"n_files": 178,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "kb07b1_Scan1",
+"dir": true,
+"mtime": 1790068400.0,
+"size": 0,
+"probe": {
+"groups": [
+[
+"kb07b1_Scan1",
+"component_data",
+237
+]
+],
+"n_dirs": 0,
+"n_files": 237,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "kb07b2_Scan1",
+"dir": true,
+"mtime": 1790072000.0,
+"size": 0,
+"probe": {
+"groups": [
+[
+"kb07b2_Scan1",
+"component_data",
+204
+]
+],
+"n_dirs": 0,
+"n_files": 204,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "kb07bnc_Scan1",
+"dir": true,
+"mtime": 1790075600.0,
+"size": 0,
+"probe": {
+"groups": [
+[
+"kb07bnc_Scan1",
+"component_data",
+246
+]
+],
+"n_dirs": 0,
+"n_files": 246,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "pipeline_runs",
+"dir": true,
+"mtime": 1790079200.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 8,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "pipeline_runs_v2",
+"dir": true,
+"mtime": 1790082800.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 3,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "pipeline_runs_v3",
+"dir": true,
+"mtime": 1790086400.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 3,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "projectA.Rproj",
+"dir": false,
+"mtime": 1790090000.0,
+"size": 218
+},
+{
+"name": "qc_runs",
+"dir": true,
+"mtime": 1790093600.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 2,
+"n_files": 3,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "results_a.rds",
+"dir": false,
+"mtime": 1790097200.0,
+"size": 640000000
+},
+{
+"name": "results_b.rds",
+"dir": false,
+"mtime": 1790100800.0,
+"size": 380000000
+},
+{
+"name": "seq_runs",
+"dir": true,
+"mtime": 1790104400.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 20,
+"n_files": 17,
+"others": [],
+"ms": 5
+}
+},
+{
+"name": "session1.RData",
+"dir": false,
+"mtime": 1790108000.0,
+"size": 4350000000
+},
+{
+"name": "share (fileserver.example.org) (Z) - Verknüpfung.lnk",
+"dir": false,
+"mtime": 1790111600.0,
+"size": 740
+},
+{
+"name": "Tissue A",
+"dir": true,
+"mtime": 1790115200.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 1,
+"n_files": 4,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "tissueb",
+"dir": true,
+"mtime": 1790118800.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 10,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "TissueC",
+"dir": true,
+"mtime": 1790122400.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 8,
+"n_files": 8,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "toolkit-1.0.0.tar.gz",
+"dir": false,
+"mtime": 1790126000.0,
+"size": 57000000
+},
+{
+"name": "tools_a",
+"dir": true,
+"mtime": 1790129600.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 1,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+},
+{
+"name": "transfer",
+"dir": true,
+"mtime": 1790133200.0,
+"size": 0,
+"probe": {
+"groups": [],
+"n_dirs": 3,
+"n_files": 2,
+"others": [],
+"ms": 0
+}
+}
+]
+}

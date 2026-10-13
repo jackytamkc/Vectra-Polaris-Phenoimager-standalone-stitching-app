@@ -28,3 +28,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Screenshots from tools/shots.py
+tests/_shots/
+
+# Synthetic tile tree (tests/fixtures/make_synth.py used to write it here by default)
+tests/fixtures/synth/
