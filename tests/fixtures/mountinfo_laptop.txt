@@ -1,0 +1,10 @@
+22 28 0:21 / /sys rw,nosuid,nodev,noexec,relatime - sysfs sysfs rw
+23 28 0:22 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+28 1 8:2 / / rw,relatime - btrfs /dev/sda2 rw,ssd,space_cache=v2,subvolid=256,subvol=/@
+29 28 8:2 /@home /home rw,relatime - btrfs /dev/sda2 rw,ssd,space_cache=v2,subvolid=257,subvol=/@home
+35 28 0:30 / /tmp rw,nosuid,nodev - tmpfs tmpfs rw,size=8079620k,nr_inodes=1048576,inode64
+36 28 0:31 / /net rw,relatime - autofs /etc/auto.net rw,fd=7,pgrp=1100,timeout=300,minproto=5,maxproto=5,indirect,pipe_ino=21011
+37 28 0:32 / /mnt/smbhome rw,relatime - smb3 //nas.example.org/home/labuser rw,vers=3.1.1,cache=strict,username=labuser,uid=1000,noforceuid,gid=1000,noforcegid,addr=192.0.2.30,file_mode=0755,dir_mode=0755,soft
+38 28 0:33 / /mnt/dav rw,nosuid,nodev,relatime - davfs https://webdav.example.org/remote.php/dav rw,user_id=0,group_id=0,allow_other,max_read=16384
+39 28 0:34 / /mnt/wsl rw,relatime - 9p drvfs rw,dirsync,aname=drvfs;path=C:\;uid=1000;gid=1000,trans=virtio
+40 28 0:35 / /run/media/labuser/Backup\040Disk rw,nosuid,nodev,relatime - exfat /dev/sdc1 rw,uid=1000,gid=1000

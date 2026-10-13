@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import psutil
 import logging
@@ -78,13 +79,29 @@ class ChannelDialog(tk.Toplevel):
         self.destroy()
 
 
+class StitchCancelled(Exception):
+    """Internal: raised at a cancellation checkpoint; never escapes a public method."""
+
+
 class StitchingEngine:
-    def __init__(self, input_dir, output_path, progress_callback=None, ask_user_callback=None):
+    def __init__(self, input_dir, output_path, progress_callback=None, ask_user_callback=None,
+                 *, tile_files=None, image_name=None, cancel_event=None, temp_dir=None):
         self.input_dir = Path(input_dir)
         self.output_path = Path(output_path)
         self.progress_callback = progress_callback
         self.ask_user_callback = ask_user_callback
         self.temp_path = self.output_path.with_suffix('.tmp.raw')
+        if temp_dir is not None:                                   # scratch folder for disk mode
+            self.temp_path = Path(temp_dir) / self.temp_path.name
+        # v2 options (defaults == v1 behaviour)
+        self.tile_files = (None if tile_files is None
+                           else sorted({os.path.basename(os.fspath(f)) for f in tile_files}))
+        self.image_name = image_name or self.input_dir.name       # OME Image@Name, log prefix, callback arg
+        self.cancel_event = cancel_event
+        self.cancelled = False
+        self.failed_tiles = 0
+        self.n_listed = 0        # tile files scan_metadata considered; the ones it dropped are missing from tiles
+        self.last_error = None   # plain-data record of the last slide-level failure (UI reasons only)
 
         self.tiles = []
         self.canvas_shape = None
@@ -100,7 +117,8 @@ class StitchingEngine:
         self.tiff_res_val = (20000, 20000)  # Pixels per Unit
         self.tiff_res_unit = 3  # 3 = Centimeter
 
-    def get_rational(self, tag):
+    @staticmethod
+    def get_rational(tag):
         try:
             val = tag.value
             if isinstance(val, (tuple, list)) and len(val) == 2:
@@ -112,7 +130,8 @@ class StitchingEngine:
             logging.debug(f"get_rational: could not parse tag {tag}: {e}")
             return 0
 
-    def extract_perkin_elmer_channels(self, tif):
+    @staticmethod
+    def extract_perkin_elmer_channels(tif):
         names = []
         try:
             for page in tif.pages:
@@ -134,7 +153,72 @@ class StitchingEngine:
             logging.debug(f"extract_perkin_elmer_channels: {e}")
         return names
 
+    @staticmethod
+    def normalize_shape(shape):
+        """(n_channels, tile_h, tile_w) exactly as v1 interprets a first-tile array shape; None for other ndims."""
+        if len(shape) == 2:
+            return 1, shape[0], shape[1]
+        if len(shape) == 3:
+            s = shape
+            if s[0] < s[1] and s[0] < s[2]:
+                return s[0], s[1], s[2]
+            return s[2], s[0], s[1]
+        return None
+
+    @staticmethod
+    def assess_channels(extracted, n_channels):
+        """v1's suspicious-name rule. Returns (names, None) when usable, else (None, 'missing'|'count'|'duplicate')."""
+        if not extracted:
+            return None, 'missing'
+        if len(extracted) != n_channels:
+            return None, 'count'
+        if len(set(extracted)) < len(extracted):
+            return None, 'duplicate'
+        return list(extracted), None
+
+    @staticmethod
+    def resolution_from_tags(tags):
+        """v1's unit rules. (res_cm_x, res_cm_y, um_x, um_y) or None when tag 282/283 is missing.
+        um_* is None when res_cm_* <= 0 (v1 then keeps its 0.5 default)."""
+        if not (282 in tags and 283 in tags):
+            return None
+        x_res_raw = StitchingEngine.get_rational(tags[282])
+        y_res_raw = StitchingEngine.get_rational(tags[283])
+        unit = tags[296].value if 296 in tags else 2
+        if unit == 2:
+            res_cm_x, res_cm_y = x_res_raw / 2.54, y_res_raw / 2.54
+        elif unit == 3:
+            res_cm_x, res_cm_y = x_res_raw, y_res_raw
+        else:
+            res_cm_x, res_cm_y = 20000, 20000
+        return (res_cm_x, res_cm_y,
+                10000 / res_cm_x if res_cm_x > 0 else None,
+                10000 / res_cm_y if res_cm_y > 0 else None)
+
+    def _cancel_requested(self):
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            self.cancelled = True
+            return True
+        return False
+
+    def _remember_error(self, e):
+        # Plain data only: keeping the exception would keep its traceback frames, which pin the canvas.
+        self.last_error = {"type": type(e).__name__, "message": str(e),
+                           "errno": getattr(e, "errno", None), "winerror": getattr(e, "winerror", None),
+                           "oserror": isinstance(e, OSError)}
+
+    def cleanup_temp(self):
+        """Delete the disk-mode scratch file if present. Idempotent. Returns True when no file remains."""
+        try:
+            if self.temp_path.exists():
+                os.remove(self.temp_path)
+        except OSError as e:
+            logging.debug(f"cleanup_temp: {e}")
+        return not self.temp_path.exists()
+
     def _read_tile_meta_worker(self, path):
+        if self._cancel_requested():
+            return None
         try:
             with tifffile.TiffFile(path) as tif:
                 tags = tif.pages[0].tags
@@ -159,39 +243,33 @@ class StitchingEngine:
             return None
 
     def scan_metadata(self):
-        files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith(('.tif', '.tiff'))])
+        if self._cancel_requested():
+            return False
+        if self.tile_files is not None:
+            files = list(self.tile_files)
+        else:
+            files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith(('.tif', '.tiff'))])
+        self.n_listed = len(files)
         if not files: return False
 
-        logging.info(f"🔍 [{self.input_dir.name}] Quick-Scanning {len(files)} tiles...")
+        logging.info(f"🔍 [{self.image_name}] Quick-Scanning {len(files)} tiles...")
         first_file = self.input_dir / files[0]
         try:
             sample = tifffile.imread(first_file)
             self.dtype = sample.dtype
-
-            if sample.ndim == 2:
-                self.n_channels, self.tile_h, self.tile_w = 1, *sample.shape
-            elif sample.ndim == 3:
-                s = sample.shape
-                # Normalize to (C, H, W)
-                if s[0] < s[1] and s[0] < s[2]:
-                    self.n_channels, self.tile_h, self.tile_w = s
-                else:
-                    self.tile_h, self.tile_w, self.n_channels = s[0], s[1], s[2]
+            dims = self.normalize_shape(sample.shape)
+            if dims is not None:
+                self.n_channels, self.tile_h, self.tile_w = dims
 
             with tifffile.TiffFile(first_file) as tif:
-                # 1. Extract Channels
                 extracted = self.extract_perkin_elmer_channels(tif)
-                is_suspicious = False
-                if extracted and len(extracted) == self.n_channels:
-                    unique = set(extracted)
-                    if len(unique) < len(extracted): is_suspicious = True
-
-                if extracted and len(extracted) == self.n_channels and not is_suspicious:
-                    self.channel_names = extracted
+                names, _problem = self.assess_channels(extracted, self.n_channels)
+                if names is not None:
+                    self.channel_names = names
                 else:
                     logging.warning(f"⚠️ Channel Name Issue: {extracted}")
                     if self.ask_user_callback:
-                        user_names = self.ask_user_callback(self.input_dir.name,
+                        user_names = self.ask_user_callback(self.image_name,
                                                             extracted if extracted else ["?"] * self.n_channels)
                         if user_names and len(user_names) == self.n_channels:
                             self.channel_names = user_names
@@ -200,46 +278,27 @@ class StitchingEngine:
                     else:
                         self.channel_names = [f"Channel {x}" for x in range(self.n_channels)]
 
-                # 2. Extract Resolution (The Smart Fix)
-                page = tif.pages[0]
-                tags = page.tags
-
-                if 282 in tags and 283 in tags:
-                    x_res_raw = self.get_rational(tags[282])  # Pixels per Unit
-                    y_res_raw = self.get_rational(tags[283])
-                    unit = tags[296].value if 296 in tags else 2  # Default to Inch (2) if missing
-
-                    # Normalize to Pixels per Centimeter
-                    if unit == 2:  # Inch
-                        res_cm_x = x_res_raw / 2.54
-                        res_cm_y = y_res_raw / 2.54
-                    elif unit == 3:  # Centimeter
-                        res_cm_x = x_res_raw
-                        res_cm_y = y_res_raw
-                    else:  # No unit/Unknown
-                        res_cm_x = 20000  # Assume 0.5um
-                        res_cm_y = 20000
-
-                    # Store for TIFF writing (Pixels per CM)
+                res = self.resolution_from_tags(tif.pages[0].tags)
+                if res is not None:
+                    res_cm_x, res_cm_y, um_x, um_y = res
                     self.tiff_res_val = (res_cm_x, res_cm_y)
-                    self.tiff_res_unit = 3  # Centimeter
-
-                    # Store for OME-XML (Microns per Pixel)
-                    # 1 cm = 10,000 microns.  Microns/Pixel = 10,000 / (Pixels/CM)
-                    if res_cm_x > 0: self.phys_size_x_um = 10000 / res_cm_x
-                    if res_cm_y > 0: self.phys_size_y_um = 10000 / res_cm_y
-
+                    self.tiff_res_unit = 3
+                    if um_x is not None: self.phys_size_x_um = um_x
+                    if um_y is not None: self.phys_size_y_um = um_y
                     logging.info(f"📏 Resolution Found: {self.phys_size_x_um:.4f} µm/pixel")
                 else:
                     logging.warning("⚠️ No resolution tags found. Defaulting to 0.5 µm/pixel.")
 
         except Exception as e:
             logging.error(f"❌ Error reading first tile header: {e}")
+            self._remember_error(e)
             return False
 
         file_paths = [self.input_dir / f for f in files]
         with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
             results = list(executor.map(self._read_tile_meta_worker, file_paths))
+        if self._cancel_requested():
+            return False
         self.tiles = [r for r in results if r is not None]
 
         if not self.tiles: return False
@@ -253,7 +312,7 @@ class StitchingEngine:
         total_h = (max_y + self.tile_h) - self.min_y
         self.canvas_shape = (self.n_channels, total_h, total_w)
 
-        logging.info(f"📊 [{self.input_dir.name}] Canvas: {total_w}x{total_h} pixels | Channels: {self.channel_names}")
+        logging.info(f"📊 [{self.image_name}] Canvas: {total_w}x{total_h} pixels | Channels: {self.channel_names}")
         return True
 
     def calculate_ram_needed_gb(self):
@@ -266,10 +325,10 @@ class StitchingEngine:
         mode_name = "RAM" if use_ram else "DISK (Fallback)"
         try:
             if use_ram:
-                logging.info(f"⬇️  [{self.input_dir.name}] Downloading & Stitching to RAM...")
+                logging.info(f"⬇️  [{self.image_name}] Downloading & Stitching to RAM...")
                 target = np.zeros(self.canvas_shape, dtype=self.dtype)
             else:
-                logging.info(f"⚠️  [{self.input_dir.name}] Using DISK Mode (Slower)...")
+                logging.info(f"⚠️  [{self.image_name}] Using DISK Mode (Slower)...")
                 target = tifffile.memmap(self.temp_path, shape=self.canvas_shape, dtype=self.dtype, bigtiff=True)
 
             completed_tiles = 0
@@ -279,6 +338,8 @@ class StitchingEngine:
 
             def _load_and_paste(tile):
                 nonlocal completed_tiles, failed_tiles
+                if self._cancel_requested():
+                    return False
                 try:
                     img = tifffile.imread(tile['path'])
                     if img.ndim == 2:
@@ -315,17 +376,28 @@ class StitchingEngine:
 
             with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool:
                 list(pool.map(_load_and_paste, self.tiles))
+            self.failed_tiles = failed_tiles
+            if self._cancel_requested():
+                raise StitchCancelled()
 
             if failed_tiles > 0:
-                logging.warning(f"⚠️ [{self.input_dir.name}] {failed_tiles}/{total_tiles} tiles FAILED — output will have gaps!")
+                logging.warning(f"⚠️ [{self.image_name}] {failed_tiles}/{total_tiles} tiles FAILED — output will have gaps!")
 
             if not use_ram: target.flush()
             if self.progress_callback: self.progress_callback(total_tiles, total_tiles, "Stitching")
 
-            logging.info(f"✅ [{self.input_dir.name}] Stitching ({mode_name}) Complete.")
+            logging.info(f"✅ [{self.image_name}] Stitching ({mode_name}) Complete.")
             return target
+        except StitchCancelled:
+            logging.info(f"⏹️ [{self.image_name}] Stitching cancelled.")
+            target = None
+            self.cleanup_temp()
+            return None
         except Exception as e:
             logging.error(f"❌ Stitch Failed: {e}")
+            self._remember_error(e)
+            target = None
+            self.cleanup_temp()
             return None
 
     # OME-TIFF pixel type mapping. OME schema requires specific strings.
@@ -352,7 +424,7 @@ class StitchingEngine:
                 logging.warning(f"⚠️ Unrecognized dtype '{numpy_dtype}', defaulting to uint16")
                 pixel_type = 'uint16'
 
-            image = ET.SubElement(root, "Image", ID="Image:0", Name=self.input_dir.name)
+            image = ET.SubElement(root, "Image", ID="Image:0", Name=self.image_name)
 
             # Use the calculated Physical Size
             pixels = ET.SubElement(image, "Pixels",
@@ -384,13 +456,14 @@ class StitchingEngine:
             return None
 
     def write_to_disk(self, canvas, is_ram_mode):
-        logging.info(f"💾 [{self.input_dir.name}] Formatting & Saving (Visiopharm Replica)...")
+        ok = False
+        logging.info(f"💾 [{self.image_name}] Formatting & Saving (Visiopharm Replica)...")
         if self.progress_callback: self.progress_callback(0, 0, "Formatting...")
 
         try:
             os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
 
-            logging.info(f"   [{self.input_dir.name}] Converting to Interleaved (H, W, C)...")
+            logging.info(f"   [{self.image_name}] Converting to Interleaved (H, W, C)...")
             interleaved_data = np.moveaxis(canvas, 0, -1)
             h, w, c = interleaved_data.shape
 
@@ -423,33 +496,46 @@ class StitchingEngine:
                 temp_w //= 2
                 n_levels += 1
 
-            logging.info(f"   [{self.input_dir.name}] Generating {n_levels} Pyramid Levels.")
+            logging.info(f"   [{self.image_name}] Generating {n_levels} Pyramid Levels.")
 
+            if self._cancel_requested():
+                raise StitchCancelled()
             with tifffile.TiffWriter(self.output_path, bigtiff=True) as tif:
 
                 if self.progress_callback: self.progress_callback(0, 0, "Writing Full Res...")
-                logging.info(f"   [{self.input_dir.name}] Writing Level 0...")
+                logging.info(f"   [{self.image_name}] Writing Level 0...")
                 tif.write(interleaved_data, subifds=n_levels, **opts_main)
 
                 prev = interleaved_data
                 for level in range(1, n_levels + 1):
+                    if self._cancel_requested():
+                        raise StitchCancelled()
                     if self.progress_callback:
                         self.progress_callback(level, n_levels, f"Writing Pyramid {level}/{n_levels}")
 
-                    logging.info(f"   [{self.input_dir.name}] Downsampling Level {level}...")
+                    logging.info(f"   [{self.image_name}] Downsampling Level {level}...")
 
                     curr = prev[::2, ::2, :]
 
-                    logging.info(f"   [{self.input_dir.name}] Writing Level {level}...")
+                    logging.info(f"   [{self.image_name}] Writing Level {level}...")
                     tif.write(curr, **opts_pyramid)
                     prev = curr
 
             final_size = os.path.getsize(self.output_path) / (1024 ** 2)
-            logging.info(f"🎉 [{self.input_dir.name}] Success! (Size: {final_size:.1f} MB)")
+            logging.info(f"🎉 [{self.image_name}] Success! (Size: {final_size:.1f} MB)")
             if self.progress_callback: self.progress_callback(100, 100, "Finished")
+            ok = True
 
+        except StitchCancelled:
+            logging.info(f"⏹️ [{self.image_name}] Writing cancelled.")
+            if os.path.exists(self.output_path):
+                try:
+                    os.remove(self.output_path)
+                except OSError:
+                    pass
         except Exception as e:
-            logging.error(f"❌ [{self.input_dir.name}] Write Failed: {e}")
+            logging.error(f"❌ [{self.image_name}] Write Failed: {e}")
+            self._remember_error(e)
             if os.path.exists(self.output_path):
                 try:
                     os.remove(self.output_path)
@@ -465,6 +551,7 @@ class StitchingEngine:
                         pass
             else:
                 del canvas
+        return ok
 
 
 # ==========================================
@@ -605,5 +692,14 @@ class StitcherApp(tk.Tk):
         messagebox.showinfo("Done", "Processing Complete!")
 
 
+def _main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--classic" in argv:                      # v1 UI, kept for one release
+        StitcherApp().mainloop()
+        return 0
+    from yfs.ui.app import main as yfs_main      # static import: PyInstaller (pathex=['..']) bundles yfs
+    return yfs_main(engine_cls=StitchingEngine, argv=argv)
+
+
 if __name__ == "__main__":
-    StitcherApp().mainloop()
+    sys.exit(_main())

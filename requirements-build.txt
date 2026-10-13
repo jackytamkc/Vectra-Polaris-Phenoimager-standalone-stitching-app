@@ -1,2 +1,8 @@
 -r requirements.txt
-pyinstaller>=6.0
+# PyInstaller 7 will refuse the Mac spec's onefile .app; move that spec to onedir before lifting this bound.
+pyinstaller>=6,<7
+# The release binaries get the tifffile and imagecodecs versions that tests/test_engine_identity.py last passed
+# with, because CI never runs that test and a newer tifffile may change the bytes it writes. Update these only
+# after the identity test passes with the new versions (they need Python 3.11 or later).
+tifffile==2026.3.3
+imagecodecs==2026.3.6

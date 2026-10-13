@@ -6,7 +6,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['psutil', 'imagecodecs._shared', 'imagecodecs._imcd'],
+    # _imcd loads _shared_cython at runtime for LZW and TIFF predictors.
+    hiddenimports=['psutil', 'imagecodecs._shared', 'imagecodecs._shared_cython', 'imagecodecs._imcd'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -6,7 +6,15 @@
 # (arm64) and Intel (x86_64). Requires a universal2 Python and universal2
 # wheels for numpy/tifffile/psutil/imagecodecs. If those aren't available,
 # remove target_arch (or set it to 'arm64' or 'x86_64') to build for the
-# host architecture only.
+# host architecture only. The release workflow builds on the arm64
+# macos-latest runner with target_arch=None, so the released app runs on
+# Apple Silicon only.
+import os
+import re
+
+# Finder's Get Info shows this version; yfs/__init__.py is the one place it is set.
+with open(os.path.join(SPECPATH, '..', 'yfs', '__init__.py'), encoding='utf-8') as f:
+    VERSION = re.search(r"^__version__ = ['\"]([^'\"]+)['\"]", f.read(), re.M).group(1)
 
 
 a = Analysis(
@@ -14,7 +22,8 @@ a = Analysis(
     pathex=['..'],
     binaries=[],
     datas=[],
-    hiddenimports=['psutil', 'imagecodecs._shared', 'imagecodecs._imcd'],
+    # _imcd loads _shared_cython at runtime for LZW and TIFF predictors.
+    hiddenimports=['psutil', 'imagecodecs._shared', 'imagecodecs._shared_cython', 'imagecodecs._imcd'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -52,8 +61,8 @@ app = BUNDLE(
     bundle_identifier='uk.ed.ramachandran.favouritestitcher',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.1.0',
-        'CFBundleVersion': '1.1.0',
+        'CFBundleShortVersionString': VERSION,
+        'CFBundleVersion': VERSION,
         'LSMinimumSystemVersion': '11.0',
     },
 )
